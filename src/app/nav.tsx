@@ -9,6 +9,7 @@ const Nav: React.FC = () => {
     <Box 
       sx={{
         mb: 4,
+        mt: 4,
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',

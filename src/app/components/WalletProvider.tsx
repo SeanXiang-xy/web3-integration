@@ -184,15 +184,20 @@ const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
         method: 'wallet_switchEthereumChain',
         params: [{ chainId }],
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('切换网络失败:', error);
       // 如果是因为网络不存在，尝试添加网络
-      if (error.code === 4902) {
+      if (typeof error === 'object' && error !== null && 'code' in error && error.code === 4902) {
         setWalletState(prev => ({ ...prev, error: '该网络尚未添加到您的钱包，请手动添加' }));
-      } else {
+      } else if (error instanceof Error) {
         setWalletState(prev => ({
           ...prev,
           error: error.message || '切换网络失败',
+        }));
+      } else {
+        setWalletState(prev => ({
+          ...prev,
+          error: '切换网络失败',
         }));
       }
     } finally {

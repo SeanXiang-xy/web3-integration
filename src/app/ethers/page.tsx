@@ -1,122 +1,173 @@
-'use client';
+'use client'
+
 import React, { useState, useEffect, useCallback } from 'react';
-import { Box, Typography, Card, CardContent, TextField, Button, Grid, Alert, CircularProgress, Tabs, Tab, IconButton } from '@mui/material';
-import { ethers } from 'ethers';
-import { erc20ABI, sampleErc20Address } from '../../lib/erc20';
+import {
+  Card,
+  CardContent,
+  Typography,
+  TextField,
+  Button,
+  Box,
+  Tabs,
+  Tab,
+  Alert,
+  IconButton,
+  CircularProgress
+} from '@mui/material';
 import { CopyAll, Info } from '@mui/icons-material';
-import { useWallet, truncateAddress } from '../components/WalletProvider';
+import { ethers } from 'ethers';
+import { useWallet } from '../components/WalletProvider';
 
-// 格式化时间戳
-const formatTimestamp = (timestamp: number): string => {
-  return new Date(timestamp * 1000).toLocaleString();
-};
+// 示例ERC20代币地址（Sepolia测试网）
+const sampleErc20Address = '0x5FbDB2315678afecb367f032d93F642f64180aa3';
 
-// 格式化大数值
-const formatLargeNumber = (value: string | number, decimals: number = 18, maxDecimals: number = 6): string => {
+// 格式化大数值（处理大数时避免精度丢失）
+const formatBigNumber = (value: ethers.BigNumberish, decimals: number = 18): string => {
+  if (!value) return '0';
   try {
-    const numValue = typeof value === 'string' ? parseFloat(value) : value;
-    const divisor = Math.pow(10, decimals);
-    const formatted = numValue / divisor;
-    return formatted.toFixed(Math.min(maxDecimals, decimals));
+    // Convert to string first to handle various input types
+    const valueStr = typeof value === 'string' ? value : String(value);
+    return ethers.formatUnits(valueStr, decimals);
   } catch (error) {
     console.error('格式化数值失败:', error);
-    return String(value);
+    return '0';
   }
 };
 
-// 增强的地址验证函数
-const isValidEthAddress = (address: string): boolean => {
-  if (!/^0x[a-fA-F0-9]{40}$/.test(address)) return false;
+// 格式化时间戳
+const formatTimestamp = (timestamp: number): string => {
   try {
-    // 尝试检查地址校验和
+    return new Date(timestamp * 1000).toLocaleString('zh-CN');
+  } catch (error) {
+    console.error('格式化时间戳失败:', error);
+    return '未知';
+  }
+};
+
+// 验证以太坊地址
+const isValidAddress = (address: string): boolean => {
+  try {
     ethers.getAddress(address);
     return true;
-  } catch (e) {
+  } catch {
     return false;
   }
 };
 
-// 自定义Tab面板组件
-const TabPanel = ({ children, value, index }: { children: React.ReactNode; value: number; index: number }) => {
+// 截断地址显示
+const truncateAddress = (address: string): string => {
+  if (!address) return '';
+  return address.length > 10 ? `${address.slice(0, 6)}...${address.slice(-4)}` : address;
+};
+
+// TabPanel组件
+const TabPanel = (props: {
+  children?: React.ReactNode;
+  index: number;
+  value: number;
+}) => {
+  const { children, value, index, ...other } = props;
+
   return (
-    <div role="tabpanel" hidden={value !== index} className="fade-in">
-      {value === index && <Box sx={{ pt: 3 }}>{children}</Box>}
+    <div
+      role="tabpanel"
+      hidden={value !== index}
+      id={`tabpanel-${index}`}
+      aria-labelledby={`tab-${index}`}
+      {...other}
+    >
+      {value === index && <Box sx={{ p: 0 }}>{children}</Box>}
     </div>
   );
 };
 
-// 增强的代币信息Hook
+// useTokenInfo Hook - 获取代币信息
 const useTokenInfo = (contractAddress: string, provider: ethers.BrowserProvider | null) => {
   const [tokenInfo, setTokenInfo] = useState({
-    tokenName: '未知',
-    tokenSymbol: '未知',
-    tokenDecimals: 18,
-    tokenTotalSupply: '0',
+    name: '未知',
+    symbol: '未知',
+    decimals: 18,
+    totalSupply: '',
     isLoading: false,
-    error: null as string | null,
-    isAddressValid: true
+    error: ''
   });
 
-  useEffect(() => {
-    // 条件查询：只有在地址有效且provider存在时才查询
-    if (!contractAddress || !provider || !isValidEthAddress(contractAddress)) {
-      setTokenInfo(prev => ({
-        ...prev,
-        isAddressValid: !contractAddress || isValidEthAddress(contractAddress),
-        isLoading: false
-      }));
+  const fetchTokenInfo = useCallback(async () => {
+    if (!contractAddress || !isValidAddress(contractAddress) || !provider) {
+      setTokenInfo(prev => ({ ...prev, isLoading: false }));
       return;
     }
 
-    const fetchTokenInfo = async () => {
-      setTokenInfo(prev => ({ ...prev, isLoading: true, error: null }));
-      try {
-        const tokenContract = new ethers.Contract(contractAddress, erc20ABI, provider);
-        
-        // 并行请求基本代币信息
-        const [name, symbol, decimals] = await Promise.all([
-          tokenContract.name(),
-          tokenContract.symbol(),
-          tokenContract.decimals()
-        ]);
+    setTokenInfo(prev => ({ ...prev, isLoading: true, error: '' }));
+    try {
+      const contract = new ethers.Contract(
+        contractAddress,
+        [
+          'function name() view returns (string)',
+          'function symbol() view returns (string)',
+          'function decimals() view returns (uint8)',
+          'function totalSupply() view returns (uint256)'
+        ],
+        provider
+      );
 
-        // 单独获取totalSupply，处理可能的解码错误
-        let totalSupply = '0';
-        try {
-          const supply = await tokenContract.totalSupply();
-          totalSupply = formatLargeNumber(supply.toString(), decimals);
-        } catch (supplyError) {
-          console.warn('获取总供应量失败，使用默认值:', supplyError);
-          // 即使totalSupply获取失败，也继续显示其他代币信息
-        }
+      // 单独调用每个方法并处理可能的错误，避免一个方法失败导致整体失败
+      let name = '未知';
+      let symbol = '未知';
+      let decimals = 18;
+      let totalSupply = '';
+      const individualErrors: string[] = [];
 
-        setTokenInfo({
-          tokenName: name,
-          tokenSymbol: symbol,
-          tokenDecimals: decimals,
-          tokenTotalSupply: totalSupply,
-          isLoading: false,
-          error: null,
-          isAddressValid: true
-        });
-      } catch (error) {
-        console.error('查询代币信息失败:', error);
-        setTokenInfo(prev => ({
-          ...prev,
-          isLoading: false,
-          error: error instanceof Error ? error.message : '查询代币信息失败'
-        }));
-      }
-    };
+      // 使用链式catch处理错误，避免额外的try-catch嵌套
+      name = await contract.name().catch(() => {
+        individualErrors.push('获取名称失败');
+        return '未知';
+      });
 
-    fetchTokenInfo();
+      symbol = await contract.symbol().catch(() => {
+        individualErrors.push('获取符号失败');
+        return '未知';
+      });
+
+      decimals = await contract.decimals().catch(() => {
+        individualErrors.push('获取小数位失败');
+        return 18;
+      });
+
+      // 为了避免编译错误，使用字符串'0'作为默认值
+      const supply = await contract.totalSupply().catch(() => {
+        individualErrors.push('获取总供应量失败');
+        return '0';
+      });
+      totalSupply = formatBigNumber(supply, decimals);
+
+      setTokenInfo({
+        name,
+        symbol,
+        decimals,
+        totalSupply,
+        isLoading: false,
+        error: individualErrors.length > 0 ? individualErrors.join(', ') : ''
+      });
+    } catch (error) {
+      console.error('查询代币信息失败:', error);
+      setTokenInfo(prev => ({
+        ...prev,
+        isLoading: false,
+        error: error instanceof Error ? error.message : '查询代币信息失败'
+      }));
+    }
   }, [contractAddress, provider]);
+
+  useEffect(() => {
+    fetchTokenInfo();
+  }, [contractAddress, provider, fetchTokenInfo]);
 
   return tokenInfo;
 };
 
 const EthersPage: React.FC = () => {
-  // 使用全局钱包状态 - 解构所有需要的属性
+  // 使用全局钱包状态
   const { address, isConnected, connectWallet, disconnectWallet, network } = useWallet();
   
   // 内部状态管理
@@ -141,7 +192,7 @@ const EthersPage: React.FC = () => {
     tokenName: '未知',
     tokenSymbol: '未知',
     tokenDecimals: 18,
-    transferEvents: [] as Array<{from: string, to: string, value: string, blockNumber: number, timestamp: string}>  
+    transferEvents: [] as Array<{from: string, to: string, value: string, blockNumber: number, timestamp: string}>
   });
 
   // UI状态
@@ -150,169 +201,159 @@ const EthersPage: React.FC = () => {
     activeTab: 0,
     success: null as string | null
   });
-  
-  // 当钱包连接状态改变时更新provider和signer
+
+  // 获取代币信息
+  const tokenInfo = useTokenInfo(formData.tokenContractAddress, provider);
+  const { name: tokenName, symbol: tokenSymbol, decimals: tokenDecimals, totalSupply: tokenTotalSupply, isLoading: tokenInfoLoading, error: tokenInfoError } = tokenInfo;
+
+  // 地址验证
+  const isAddressValid = isValidAddress(formData.tokenContractAddress);
+
+  // Provider和Signer状态更新
   useEffect(() => {
-    const updateProviderAndSigner = async () => {
-      if (typeof window !== 'undefined' && window.ethereum && isConnected) {
+    if (typeof window !== 'undefined' && window.ethereum && isConnected) {
+      const initProvider = async () => {
         try {
-          const newProvider = new ethers.BrowserProvider(window.ethereum);
+          // 确保window.ethereum符合Eip1193Provider类型
+          const ethereumProvider = window.ethereum as ethers.Eip1193Provider;
+          const newProvider = new ethers.BrowserProvider(ethereumProvider);
           setProvider(newProvider);
           const newSigner = await newProvider.getSigner();
           setSigner(newSigner);
-        } catch (err) {
-          console.error('更新provider失败:', err);
-          setError('初始化provider失败');
+        } catch (error) {
+          console.error('初始化Provider失败:', error);
+          setError('初始化Provider失败');
         }
-      } else {
-        setProvider(null);
-        setSigner(null);
-      }
-    };
-    
-    updateProviderAndSigner();
+      };
+      initProvider();
+    } else {
+      setProvider(null);
+      setSigner(null);
+    }
   }, [isConnected]);
 
-  // 自动填充当前地址
+  // 自动填充地址
   useEffect(() => {
     if (address) {
       setFormData(prev => ({ ...prev, addressToQuery: address }));
     }
   }, [address]);
 
-  // 输入变化处理函数在下方定义
+  // 处理输入变化
+  const handleInputChange = (field: string, value: string) => {
+    setFormData(prev => ({ ...prev, [field]: value }));
+  };
 
-  // 复制交易哈希函数在下方定义
+  // 处理Tab切换
+  const handleTabChange = (_: React.SyntheticEvent, newValue: number) => {
+    setUiState(prev => ({ ...prev, activeTab: newValue }));
+  };
 
-  // 功能1: 查询余额
-  const queryBalance = useCallback(async () => {
-    if (!provider || !formData.addressToQuery || !isValidEthAddress(formData.addressToQuery)) {
+  // 查询余额
+  const queryBalance = async () => {
+    if (!formData.addressToQuery || !isValidAddress(formData.addressToQuery) || !provider) {
       setError('请输入有效的以太坊地址');
       return;
     }
 
+    setUiState(prev => ({ ...prev, isLoading: true }));
+    setError(null);
+
     try {
-      setUiState(prev => ({ ...prev, isLoading: true }));
-      setError(null);
-      const balanceWei = await provider.getBalance(formData.addressToQuery);
-      setDataState(prev => ({ ...prev, balance: ethers.formatEther(balanceWei) }));
+      const balance = await provider.getBalance(formData.addressToQuery);
+      setDataState(prev => ({ ...prev, balance: formatBigNumber(balance) }));
     } catch (error) {
       console.error('查询余额失败:', error);
       setError(error instanceof Error ? error.message : '查询余额失败');
     } finally {
       setUiState(prev => ({ ...prev, isLoading: false }));
     }
-  }, [provider, formData.addressToQuery, setError, setUiState, setDataState]);
+  };
 
-
-
-  // 功能2: 发送ETH交易
-  const sendTransaction = useCallback(async () => {
-    if (!signer || !formData.transferToAddress || !formData.transferAmount) {
-      setError('请填写完整的转账信息');
+  // 发送交易
+  const sendTransaction = async () => {
+    if (!formData.transferToAddress || !isValidAddress(formData.transferToAddress) || !formData.transferAmount || !signer) {
+      setError('请检查目标地址和转账金额');
       return;
     }
 
-    if (!isValidEthAddress(formData.transferToAddress)) {
-      setError('请输入有效的目标地址');
-      return;
-    }
-
-    const amount = parseFloat(formData.transferAmount);
-    if (isNaN(amount) || amount <= 0) {
-      setError('请输入有效的转账金额');
-      return;
-    }
+    setUiState(prev => ({ ...prev, isLoading: true }));
+    setError(null);
 
     try {
-      setUiState(prev => ({ ...prev, isLoading: true }));
-      setError(null);
-
-      // 发送交易
+      const amount = ethers.parseEther(formData.transferAmount);
       const tx = await signer.sendTransaction({
         to: formData.transferToAddress,
-        value: ethers.parseEther(formData.transferAmount)
+        value: amount
       });
 
       setDataState(prev => ({ ...prev, txHash: tx.hash }));
       setUiState(prev => ({ ...prev, success: '交易已发送，等待确认' }));
-
+      
       // 等待交易确认
       await tx.wait();
       setUiState(prev => ({ ...prev, success: '交易已确认' }));
-
-      // 3秒后清除成功消息
-      setTimeout(() => {
-        setUiState(prev => ({ ...prev, success: null }));
-      }, 3000);
-
     } catch (error) {
       console.error('发送交易失败:', error);
       setError(error instanceof Error ? error.message : '发送交易失败');
     } finally {
       setUiState(prev => ({ ...prev, isLoading: false }));
+      setTimeout(() => {
+        setUiState(prev => ({ ...prev, success: null }));
+      }, 5000);
     }
-  }, [signer, formData.transferToAddress, formData.transferAmount, setError]);
+  };
 
-  // 使用增强的代币信息Hook
-  const { tokenName, tokenSymbol, tokenDecimals, tokenTotalSupply, isAddressValid, isLoading: tokenInfoLoading, error: tokenInfoError } = useTokenInfo(
-    formData.tokenContractAddress, 
-    provider
-  );
-
-  // 功能4: 查询代币余额
-  const queryTokenBalance = useCallback(async () => {
-    if (!provider || !formData.addressToQuery || !formData.tokenContractAddress || 
-        !isValidEthAddress(formData.addressToQuery) || !isValidEthAddress(formData.tokenContractAddress)) {
+  // 查询代币余额
+  const queryTokenBalance = async () => {
+    if (!formData.addressToQuery || !isValidAddress(formData.addressToQuery) || !formData.tokenContractAddress || !isValidAddress(formData.tokenContractAddress) || !provider) {
       setError('请输入有效的地址');
       return;
     }
 
+    setUiState(prev => ({ ...prev, isLoading: true }));
+    setError(null);
+
     try {
-      setUiState(prev => ({ ...prev, isLoading: true }));
-      setError(null);
+      const contract = new ethers.Contract(
+        formData.tokenContractAddress,
+        ['function balanceOf(address) view returns (uint256)'],
+        provider
+      );
 
-      const tokenContract = new ethers.Contract(formData.tokenContractAddress, erc20ABI, provider);
-      const balance = await tokenContract.balanceOf(formData.addressToQuery);
-
+      const balance = await contract.balanceOf(formData.addressToQuery);
       setDataState(prev => ({
-        ...prev, 
-        tokenBalance: formatLargeNumber(balance.toString(), tokenDecimals)
+        ...prev,
+        tokenBalance: formatBigNumber(balance, tokenDecimals),
+        tokenSymbol
       }));
-
     } catch (error) {
       console.error('查询代币余额失败:', error);
       setError(error instanceof Error ? error.message : '查询代币余额失败');
     } finally {
       setUiState(prev => ({ ...prev, isLoading: false }));
     }
-  }, [provider, formData.addressToQuery, formData.tokenContractAddress, tokenDecimals, setError]);
+  };
 
-  // 功能5: 发送代币
-  const transferToken = useCallback(async () => {
-    if (!signer || !formData.transferToAddress || !formData.tokenAmount || !formData.tokenContractAddress ||
-        !isValidEthAddress(formData.transferToAddress) || !isValidEthAddress(formData.tokenContractAddress)) {
-      setError('请填写完整的代币转账信息');
+  // 发送代币
+  const transferToken = async () => {
+    if (!formData.transferToAddress || !isValidAddress(formData.transferToAddress) || !formData.tokenContractAddress || !isValidAddress(formData.tokenContractAddress) || !formData.tokenAmount || !signer) {
+      setError('请检查输入信息');
       return;
     }
 
-    const amount = parseFloat(formData.tokenAmount);
-    if (isNaN(amount) || amount <= 0) {
-      setError('请输入有效的代币转账金额');
-      return;
-    }
+    setUiState(prev => ({ ...prev, isLoading: true }));
+    setError(null);
 
     try {
-      setUiState(prev => ({ ...prev, isLoading: true }));
-      setError(null);
-
-      const tokenContract = new ethers.Contract(formData.tokenContractAddress, erc20ABI, signer);
-
-      // 发送代币
-      const tx = await tokenContract.transfer(
-        formData.transferToAddress,
-        ethers.parseUnits(formData.tokenAmount, tokenDecimals)
+      const contract = new ethers.Contract(
+        formData.tokenContractAddress,
+        ['function transfer(address to, uint256 amount) returns (bool)'],
+        signer
       );
+
+      const amount = ethers.parseUnits(formData.tokenAmount, tokenDecimals);
+      const tx = await contract.transfer(formData.transferToAddress, amount);
 
       setDataState(prev => ({ ...prev, txHash: tx.hash }));
       setUiState(prev => ({ ...prev, success: '代币转账已发送，等待确认' }));
@@ -320,92 +361,180 @@ const EthersPage: React.FC = () => {
       // 等待交易确认
       await tx.wait();
       setUiState(prev => ({ ...prev, success: '代币转账已确认' }));
-
-      // 3秒后清除成功消息
-      setTimeout(() => {
-        setUiState(prev => ({ ...prev, success: null }));
-      }, 3000);
-
     } catch (error) {
       console.error('发送代币失败:', error);
       setError(error instanceof Error ? error.message : '发送代币失败');
     } finally {
       setUiState(prev => ({ ...prev, isLoading: false }));
+      setTimeout(() => {
+        setUiState(prev => ({ ...prev, success: null }));
+      }, 5000);
     }
-  }, [signer, formData.transferToAddress, formData.tokenAmount, formData.tokenContractAddress, tokenDecimals, setError]);
+  };
 
-  // 功能6: 查询转账事件
-  const queryTransferEvents = useCallback(async () => {
-    if (!provider || !formData.tokenContractAddress || !isValidEthAddress(formData.tokenContractAddress)) {
-      setUiState(prev => ({ ...prev, error: '请输入有效的代币合约地址' }));
+  // 初始化获取历史事件（使用useCallback包装以避免不必要的重新创建）
+  const fetchHistoricalEvents = useCallback(async () => {
+    if (!formData.tokenContractAddress || !isValidAddress(formData.tokenContractAddress) || !provider) {
+      setError('请输入有效的代币合约地址');
       return;
     }
 
+    setUiState(prev => ({ ...prev, isLoading: true }));
+    setError(null);
+
     try {
-      setUiState(prev => ({ ...prev, isLoading: true, error: null }));
+      const contract = new ethers.Contract(
+        formData.tokenContractAddress,
+        [
+          'event Transfer(address indexed from, address indexed to, uint256 value)',
+          'function decimals() view returns (uint8)'
+        ],
+        provider
+      );
 
-      if (!provider) {
-        throw new Error('Provider not available');
-      }
+      // 获取最近的10个转账事件
+      const filter = contract.filters.Transfer();
+      const events = await contract.queryFilter(filter, -10);
+      const currentDecimals = await contract.decimals();
 
-      // provider 已经从 useWallet hook 获取
-      
-      const tokenContract = new ethers.Contract(formData.tokenContractAddress, erc20ABI, provider);
-      
-      // 获取最近100个区块的Transfer事件
-      const latestBlock = await provider.getBlockNumber();
-      const fromBlock = Math.max(0, latestBlock - 100);
-      
-      const events = await tokenContract.queryFilter('Transfer', fromBlock, latestBlock);
+      // 格式化事件数据
+      const formattedEvents = await Promise.all(
+        events.map(async event => {
+          // 确保event是EventLog类型并有args属性
+          if (!('args' in event)) {
+            throw new Error('Invalid event format');
+          }
+          
+          const block = await provider.getBlock(event.blockNumber);
+          
+          // 检查block不为null
+          if (!block) {
+            throw new Error(`Block ${event.blockNumber} not found`);
+          }
+          
+          return {
+            from: event.args.from,
+            to: event.args.to,
+            value: formatBigNumber(event.args.value, currentDecimals),
+            blockNumber: event.blockNumber,
+            timestamp: formatTimestamp(block.timestamp)
+          };
+        })
+      );
 
-      // 并行获取每个区块的时间戳
-      const eventPromises = events.map(async (event) => {
-        const block = await provider.getBlock(event.blockNumber!);
-        // 类型断言确保是EventLog类型
-        const eventLog = event as ethers.EventLog;
-        return {
-          from: eventLog.args!.from,
-          to: eventLog.args!.to,
-          value: formatLargeNumber(eventLog.args!.value.toString(), dataState.tokenDecimals),
-          blockNumber: event.blockNumber!,
-          timestamp: block ? formatTimestamp(block.timestamp) : 'Unknown'
-        };
-      });
-
-      const formattedEvents = await Promise.all(eventPromises);
-      setDataState(prev => ({ ...prev, transferEvents: formattedEvents }));
-
-    } catch (error) {
-      console.error('查询转账事件失败:', error);
-      setUiState(prev => ({ 
-        ...prev, 
-        error: error instanceof Error ? error.message : '查询转账事件失败'
+      setDataState(prev => ({
+        ...prev,
+        transferEvents: formattedEvents.reverse(), // 按时间倒序
+        tokenSymbol
       }));
+    } catch (error) {
+      console.error('获取历史事件失败:', error);
+      setError(error instanceof Error ? error.message : '获取历史事件失败');
     } finally {
       setUiState(prev => ({ ...prev, isLoading: false }));
     }
-  }, [provider, formData.tokenContractAddress, dataState.tokenDecimals]);
+  }, [formData.tokenContractAddress, provider, tokenSymbol]);
 
-  // 处理输入变化
-  const handleInputChange = (field: string, value: string) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
-  };
+  // 监听新的Transfer事件
+  useEffect(() => {
+    // 只有在"监听事件"选项卡激活且有有效的合约地址和provider时才开始监听
+    if (!formData.tokenContractAddress || !isValidAddress(formData.tokenContractAddress) || !provider || uiState.activeTab !== 4) {
+      return;
+    }
 
-  // 处理Tab变化
-  const handleTabChange = (_: React.SyntheticEvent, newValue: number) => {
-    setUiState(prev => ({ ...prev, activeTab: newValue, error: null, success: null }));
-  };
+    
+    const startListening = async () => {
+      try {
+        const contract = new ethers.Contract(
+          formData.tokenContractAddress,
+          [
+            'event Transfer(address indexed from, address indexed to, uint256 value)',
+            'function decimals() view returns (uint8)'
+          ],
+          provider
+        );
+
+        const currentDecimals = await contract.decimals();
+        // 不使用currentSymbol，因为我们已经在dataState中存储了tokenSymbol
+
+        // 设置事件监听
+        contract.on('Transfer', (from, to, value, event) => {
+          // 格式化新事件
+          const newEvent = {
+            from: from,
+            to: to,
+            value: formatBigNumber(value, currentDecimals),
+            blockNumber: event.blockNumber,
+            timestamp: formatTimestamp(Math.floor(Date.now() / 1000)) // 使用当前时间作为临时时间戳
+          };
+
+          // 更新事件列表，只保留最近10条
+          setDataState(prev => ({
+            ...prev,
+            transferEvents: [newEvent, ...prev.transferEvents].slice(0, 10)
+          }));
+
+          // 显示新事件通知
+          setUiState(prev => ({ ...prev, success: '监听到新的转账事件' }));
+          setTimeout(() => {
+            setUiState(prev => ({ ...prev, success: null }));
+          }, 3000);
+        });
+
+        // 注意：ethers.js v6中合约事件监听的清理方式是通过合约实例调用removeAllListeners
+        // 我们将在清理函数中创建新的合约实例来移除所有监听器
+        // 不需要保存listenerId
+      } catch (error) {
+        console.error('设置事件监听失败:', error);
+        setError(error instanceof Error ? error.message : '设置事件监听失败');
+      }
+    };
+
+    // 先获取历史事件，然后开始实时监听
+    if (dataState.transferEvents.length === 0) {
+      fetchHistoricalEvents().then(() => {
+        startListening();
+      });
+    } else {
+      startListening();
+    }
+
+    // 清理函数
+    return () => {
+      if (provider && formData.tokenContractAddress) {
+        try {
+          // 创建一个临时合约实例用于移除所有监听器
+          const contract = new ethers.Contract(
+            formData.tokenContractAddress,
+            [
+              'event Transfer(address indexed from, address indexed to, uint256 value)'
+            ],
+            provider
+          );
+          // 移除所有Transfer事件的监听器
+          contract.removeAllListeners('Transfer');
+        } catch (error) {
+          console.error('清理事件监听器失败:', error);
+        }
+      }
+    };
+  }, [formData.tokenContractAddress, provider, uiState.activeTab, dataState.transferEvents.length, dataState.tokenSymbol, fetchHistoricalEvents]);
 
   // 复制交易哈希
-  const copyTxHash = useCallback(() => {
-    if (dataState.txHash && typeof window !== 'undefined') {
-      window.navigator.clipboard.writeText(dataState.txHash);
-      setUiState(prev => ({ ...prev, success: '交易哈希已复制' }));
-      setTimeout(() => {
-        setUiState(prev => ({ ...prev, success: null }));
-      }, 2000);
+  const copyTxHash = async () => {
+    if (dataState.txHash) {
+      try {
+        await navigator.clipboard.writeText(dataState.txHash);
+        setUiState(prev => ({ ...prev, success: '交易哈希已复制' }));
+        setTimeout(() => {
+          setUiState(prev => ({ ...prev, success: null }));
+        }, 2000);
+      } catch (error) {
+        console.error('复制交易哈希失败:', error);
+        setError('复制失败');
+      }
     }
-  }, [dataState.txHash, setUiState]);
+  };
 
   // 渲染余额查询选项卡
   const renderBalanceTab = () => (
@@ -489,8 +618,8 @@ const EthersPage: React.FC = () => {
     </Card>
   );
 
-  // 渲染代币信息选项卡
-  const renderTokenInfoTab = () => (
+  // 渲染合并后的代币信息和余额选项卡
+  const renderCombinedTokenTab = () => (
     <Card sx={{ borderRadius: '1rem', overflow: 'hidden' }}>
       <CardContent>
         <Typography variant="h6" gutterBottom>代币信息</Typography>
@@ -532,50 +661,36 @@ const EthersPage: React.FC = () => {
             </Alert>
           )}
         </Box>
-      </CardContent>
-    </Card>
-  );
-
-  // 渲染代币余额查询选项卡
-  const renderTokenBalanceTab = () => (
-    <Card sx={{ borderRadius: '1rem', overflow: 'hidden' }}>
-      <CardContent>
-        <Typography variant="h6" gutterBottom>查询代币余额</Typography>
-        <TextField
-          fullWidth
-          label="以太坊地址"
-          variant="outlined"
-          margin="normal"
-          value={formData.addressToQuery}
-          onChange={(e) => handleInputChange('addressToQuery', e.target.value)}
-          helperText="输入要查询的以太坊地址"
-          disabled={uiState.isLoading}
-        />
-        <TextField
-          fullWidth
-          label="代币合约地址"
-          variant="outlined"
-          margin="normal"
-          value={formData.tokenContractAddress}
-          onChange={(e) => handleInputChange('tokenContractAddress', e.target.value)}
-          helperText="输入ERC20代币合约地址"
-          disabled={uiState.isLoading}
-        />
-        <Button
-          variant="contained"
-          fullWidth
-          sx={{ mt: 2, bgcolor: '#6366f1', '&:hover': { bgcolor: '#4f46e5' } }}
-          onClick={queryTokenBalance}
-          disabled={uiState.isLoading || !provider}
-          startIcon={uiState.isLoading ? <CircularProgress size={16} /> : undefined}
-        >
-          {uiState.isLoading ? '查询中...' : '查询代币余额'}
-        </Button>
-        {dataState.tokenBalance !== '0' && (
-          <Box sx={{ mt: 3, p: 2, bgcolor: 'rgba(99, 102, 241, 0.1)', borderRadius: 1 }}>
-            <Typography variant="subtitle1">代币余额: {dataState.tokenBalance} {dataState.tokenSymbol}</Typography>
-          </Box>
-        )}
+        
+        {/* 代币余额查询 */}
+        <Box sx={{ mt: 6 }}>
+          <Typography variant="h6" gutterBottom>查询代币余额</Typography>
+          <TextField
+            fullWidth
+            label="以太坊地址"
+            variant="outlined"
+            margin="normal"
+            value={formData.addressToQuery}
+            onChange={(e) => handleInputChange('addressToQuery', e.target.value)}
+            helperText="输入要查询的以太坊地址"
+            disabled={uiState.isLoading || tokenInfoLoading}
+          />
+          <Button
+            variant="contained"
+            fullWidth
+            sx={{ mt: 2, bgcolor: '#6366f1', '&:hover': { bgcolor: '#4f46e5' } }}
+            onClick={queryTokenBalance}
+            disabled={uiState.isLoading || tokenInfoLoading || !provider}
+            startIcon={uiState.isLoading ? <CircularProgress size={16} /> : undefined}
+          >
+            {uiState.isLoading ? '查询中...' : '查询代币余额'}
+          </Button>
+          {dataState.tokenBalance !== '0' && (
+            <Box sx={{ mt: 3, p: 2, bgcolor: 'rgba(99, 102, 241, 0.1)', borderRadius: 1 }}>
+              <Typography variant="subtitle1">代币余额: {dataState.tokenBalance} {tokenSymbol}</Typography>
+            </Box>
+          )}
+        </Box>
       </CardContent>
     </Card>
   );
@@ -638,11 +753,11 @@ const EthersPage: React.FC = () => {
     </Card>
   );
 
-  // 渲染事件查询选项卡
+  // 渲染事件监听选项卡
   const renderEventsTab = () => (
     <Card sx={{ borderRadius: '1rem', overflow: 'hidden' }}>
       <CardContent>
-        <Typography variant="h6" gutterBottom>查询转账事件</Typography>
+        <Typography variant="h6" gutterBottom>监听事件</Typography>
         <TextField
           fullWidth
           label="代币合约地址"
@@ -653,19 +768,29 @@ const EthersPage: React.FC = () => {
           helperText="输入ERC20代币合约地址"
           disabled={uiState.isLoading}
         />
-        <Button
-          variant="contained"
-          fullWidth
-          sx={{ mt: 2, bgcolor: '#10b981', '&:hover': { bgcolor: '#059669' } }}
-          onClick={queryTransferEvents}
-          disabled={uiState.isLoading || !provider}
-          startIcon={uiState.isLoading ? <CircularProgress size={16} /> : undefined}
-        >
-          {uiState.isLoading ? '查询中...' : '查询转账事件'}
-        </Button>
+        <Box sx={{ mt: 2 }}>
+          <Typography variant="body2" color="text.secondary" gutterBottom>
+            当选择此选项卡时，系统会自动开始监听该代币合约的Transfer事件
+          </Typography>
+          <Button
+            variant="contained"
+            fullWidth
+            sx={{ bgcolor: '#10b981', '&:hover': { bgcolor: '#059669' } }}
+            onClick={fetchHistoricalEvents}
+            disabled={uiState.isLoading || !provider}
+            startIcon={uiState.isLoading ? <CircularProgress size={16} /> : undefined}
+          >
+            {uiState.isLoading ? '获取中...' : '重新获取历史事件'}
+          </Button>
+          {uiState.activeTab === 4 && provider && isValidAddress(formData.tokenContractAddress) && (
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 2, textAlign: 'center' }}>
+              🔍 正在监听新的转账事件...
+            </Typography>
+          )}
+        </Box>
         {dataState.transferEvents.length > 0 && (
           <Box sx={{ mt: 3, maxHeight: 400, overflowY: 'auto' }}>
-            {dataState.transferEvents.map((event, index) => (
+            {dataState.transferEvents.map((event: {from: string, to: string, value: string, blockNumber: number, timestamp: string}, index: number) => (
               <Card key={index} sx={{ mb: 2, bgcolor: 'rgba(16, 185, 129, 0.05)' }}>
                 <CardContent>
                   <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2 }}>
@@ -699,7 +824,6 @@ const EthersPage: React.FC = () => {
     </Card>
   );
   
-  // 渲染主组件
   return (
     <Box sx={{ minHeight: '100vh', bgcolor: '#f8fafc' }}>
       <Box sx={{ maxWidth: 1200, mx: 'auto', p: 4 }}>
@@ -767,85 +891,81 @@ const EthersPage: React.FC = () => {
             {error}
           </Alert>
         )}
-          {uiState.success && (
-            <Alert severity="success" sx={{ mb: 4, borderRadius: 1 }}>
-              {uiState.success}
-            </Alert>
-          )}
-          
-          {/* 功能选项卡 */}
-          <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
-            <Tabs 
-              value={uiState.activeTab} 
-              onChange={handleTabChange} 
-              variant="scrollable"
-              scrollButtons="auto"
-              aria-label="ethers.js功能选项卡"
-              sx={{
-                '& .MuiTab-root': {
-                  textTransform: 'none',
-                  fontWeight: 'medium',
-                  fontSize: '0.95rem'
-                },
-                '& .Mui-selected': {
-                  color: '#3b82f6 !important',
-                  fontWeight: 'bold'
-                },
-                '& .MuiTabs-indicator': {
-                  backgroundColor: '#3b82f6'
-                }
-              }}
-            >
-              <Tab label="查询余额" />
-              <Tab label="发送 ETH" />
-              <Tab label="代币信息" />
-              <Tab label="代币余额" />
-              <Tab label="发送代币" />
-              <Tab label="转账事件" />
-            </Tabs>
-          </Box>
-          
-          {/* 选项卡内容 */}
-          <TabPanel value={uiState.activeTab} index={0}>
-            {renderBalanceTab()}
-          </TabPanel>
-          <TabPanel value={uiState.activeTab} index={1}>
-            {renderTransactionTab()}
-          </TabPanel>
-          <TabPanel value={uiState.activeTab} index={2}>
-            {renderTokenInfoTab()}
-          </TabPanel>
-          <TabPanel value={uiState.activeTab} index={3}>
-            {renderTokenBalanceTab()}
-          </TabPanel>
-          <TabPanel value={uiState.activeTab} index={4}>
-            {renderTokenTransferTab()}
-          </TabPanel>
-          <TabPanel value={uiState.activeTab} index={5}>
-            {renderEventsTab()}
-          </TabPanel>
-          
-          {/* 使用说明 */}
-          <Card sx={{ mt: 6, borderRadius: '1rem', overflow: 'hidden', bgcolor: 'rgba(241, 245, 249, 0.8)' }}>
-            <CardContent>
-              <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <Info sx={{ width: 18, height: 18 }} />
-                使用说明
-              </Typography>
-              <Typography variant="body2" color="text.secondary" paragraph>
-                1. 首先点击连接钱包按钮，使用MetaMask等以太坊钱包连接到您的账户。
-              </Typography>
-              <Typography variant="body2" color="text.secondary" paragraph>
-                2. 连接成功后，您可以进行余额查询、ETH转账、代币信息查询、代币余额查询、代币转账和转账事件查询等操作。
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                3. 所有操作都需要确保您已连接到正确的网络（目前使用Sepolia测试网）。
-              </Typography>
-            </CardContent>
-          </Card>
+        {uiState.success && (
+          <Alert severity="success" sx={{ mb: 4, borderRadius: 1 }}>
+            {uiState.success}
+          </Alert>
+        )}
+        
+        {/* 功能选项卡 */}
+        <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
+          <Tabs 
+            value={uiState.activeTab} 
+            onChange={handleTabChange} 
+            variant="scrollable"
+            scrollButtons="auto"
+            aria-label="ethers.js功能选项卡"
+            sx={{
+              '& .MuiTab-root': {
+                textTransform: 'none',
+                fontWeight: 'medium',
+                fontSize: '0.95rem'
+              },
+              '& .Mui-selected': {
+                color: '#3b82f6 !important',
+                fontWeight: 'bold'
+              },
+              '& .MuiTabs-indicator': {
+                backgroundColor: '#3b82f6'
+              }
+            }}
+          >
+            <Tab label="查询余额" />
+            <Tab label="发送 ETH" />
+            <Tab label="代币信息" />
+            <Tab label="发送代币" />
+            <Tab label="监听事件" />
+          </Tabs>
         </Box>
+        
+        {/* 选项卡内容 */}
+        <TabPanel value={uiState.activeTab} index={0}>
+          {renderBalanceTab()}
+        </TabPanel>
+        <TabPanel value={uiState.activeTab} index={1}>
+          {renderTransactionTab()}
+        </TabPanel>
+        <TabPanel value={uiState.activeTab} index={2}>
+          {renderCombinedTokenTab()}
+        </TabPanel>
+        <TabPanel value={uiState.activeTab} index={3}>
+          {renderTokenTransferTab()}
+        </TabPanel>
+        <TabPanel value={uiState.activeTab} index={4}>
+          {renderEventsTab()}
+        </TabPanel>
+        
+        {/* 使用说明 */}
+        <Card sx={{ mt: 6, borderRadius: '1rem', overflow: 'hidden', bgcolor: 'rgba(241, 245, 249, 0.8)' }}>
+          <CardContent>
+            <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Info sx={{ width: 18, height: 18 }} />
+              使用说明
+            </Typography>
+            <Typography variant="body2" color="text.secondary" paragraph>
+              1. 首先点击连接钱包按钮，使用MetaMask等以太坊钱包连接到您的账户。
+            </Typography>
+            <Typography variant="body2" color="text.secondary" paragraph>
+              2. 连接成功后，您可以进行余额查询、ETH转账、代币信息查询、代币余额查询、代币转账和实时事件监听等操作。
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              3. 所有操作都需要确保您已连接到正确的网络（目前使用Sepolia测试网）。
+            </Typography>
+          </CardContent>
+        </Card>
       </Box>
-    );
-  }; 
+    </Box>
+  );
+};
 
-  export default EthersPage;
+export default EthersPage;

@@ -1,773 +1,860 @@
 'use client';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Box, Typography, Card, CardContent, TextField, Button, Tabs, Tab, Alert, CircularProgress, IconButton, Divider, Tooltip } from '@mui/material';
+import { Box, Typography, Card, CardContent, CircularProgress } from '@mui/material';
+import { Info, CopyAll, Send, Search } from '@mui/icons-material';
 import { useBalance, useReadContract, useWriteContract, useWatchContractEvent, useSendTransaction } from 'wagmi';
 import { parseEther, formatEther, parseUnits } from 'viem';
-import { CopyAll, Info, Search, Send, Wallet } from '@mui/icons-material';
+import { TextField, Button, Tabs, Tab, Alert, IconButton, Divider } from '@mui/material';
 import { erc20ABI, sampleErc20Address } from '../../lib/erc20';
 import { sepolia } from 'wagmi/chains';
 import { useWallet } from '../components/WalletProvider';
 
-// 地址验证函数
-const isValidEthAddress = (address: string): boolean => {
-  return /^0x[a-fA-F0-9]{40}$/.test(address);
-};
-
-// 截取地址显示
-const truncateAddress = (address: string): string => {
-  if (!address) return '';
-  return `${address.slice(0, 6)}...${address.slice(-4)}`;
-};
-
-// 格式化时间戳
-const formatTimestamp = (timestamp: string | number): string => {
-  try {
-    return new Date(timestamp).toLocaleString();
-  } catch (_error) {
-    return 'Invalid Date';
-  }
-};
-
-// 自定义Tab面板组件
-const TabPanel = ({ children, value, index }: { children: React.ReactNode; value: number; index: number }) => {
-  return (
-    <div role="tabpanel" hidden={value !== index} className="fade-in">
-      {value === index && <Box sx={{ pt: 3 }}>{children}</Box>}
-    </div>
-  );
-};
-
-// 自定义Hook：获取当前选中地址（查询地址或连接地址）
-const useCurrentAddress = (address: string | undefined, addressToQuery: string) => {
-  return useMemo(() => {
-    // 如果有查询地址且有效，使用查询地址，否则使用连接地址
-    if (addressToQuery && isValidEthAddress(addressToQuery)) {
-      return addressToQuery as `0x${string}`;
-    }
-    return address as `0x${string}`;
-  }, [address, addressToQuery]);
-};
-
-// 自定义Hook：获取代币信息（增强版，添加错误处理和验证）
-const useTokenInfo = (tokenContractAddress: string) => {
-  // 只有当合约地址有效时才执行查询
-  const isAddressValid = isValidEthAddress(tokenContractAddress);
-  
-  // 模拟初始状态，防止组件渲染错误
-  const mockContractResult = {
-    data: undefined,
-    isLoading: false,
-    isSuccess: false,
-    isError: false,
-    error: null,
-    // 其他可能需要的属性
-  };
-  
-  // 只有在地址有效时才执行合约调用
-  const tokenName = isAddressValid ? useReadContract({
-    address: tokenContractAddress as `0x${string}`,
-    abi: erc20ABI,
-    functionName: 'name',
-    chainId: sepolia.id
-  }) : mockContractResult;
-
-  const tokenSymbol = isAddressValid ? useReadContract({
-    address: tokenContractAddress as `0x${string}`,
-    abi: erc20ABI,
-    functionName: 'symbol',
-    chainId: sepolia.id
-  }) : mockContractResult;
-
-  const tokenDecimals = isAddressValid ? useReadContract({
-    address: tokenContractAddress as `0x${string}`,
-    abi: erc20ABI,
-    functionName: 'decimals',
-    chainId: sepolia.id
-  }) : mockContractResult;
-
-  const tokenTotalSupply = isAddressValid ? useReadContract({
-    address: tokenContractAddress as `0x${string}`,
-    abi: erc20ABI,
-    functionName: 'totalSupply',
-    chainId: sepolia.id
-  }) : mockContractResult;
-
-  return { 
-    tokenName, 
-    tokenSymbol, 
-    tokenDecimals, 
-    tokenTotalSupply, 
-    isAddressValid 
-  };
-};
-
 const WagmiPage: React.FC = () => {
-  // 使用通用钱包Hook
-  const { address, isConnected } = useWallet();
+  // 服务器端渲染时显示加载状态
+  if (typeof window === 'undefined') {
+    return (
+      <Box sx={{ minHeight: '100vh', bgcolor: '#f8fafc', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <Box sx={{ textAlign: 'center' }}>
+          <CircularProgress size={48} sx={{ mb: 2 }} />
+          <Typography variant="h6">加载中...</Typography>
+          <Typography variant="body2" color="text.secondary">
+            正在准备Web3集成演示
+          </Typography>
+        </Box>
+      </Box>
+    );
+  }
 
-  // 状态管理 - 重构为更有组织的结构
-  const [formData, setFormData] = useState({
-    addressToQuery: '',
-    transferToAddress: '',
-    transferAmount: '',
-    tokenAmount: '',
-    tokenContractAddress: sampleErc20Address
-  });
+  // 返回客户端渲染的组件
+  return <WagmiPageClient />;
+};
 
-  // 数据状态
-  const [dataState, setDataState] = useState({
-    transferEvents: [] as Array<{from: string; to: string; value: string; blockNumber: number; timestamp: string;}>
-  });
+// 客户端渲染的组件
+const WagmiPageClient: React.FC = () => {
 
-  // UI状态
-  const [uiState, setUiState] = useState({
-    isLoading: false,
-    activeTab: 0,
-    error: null as string | null,
-    success: null as string | null
-  });
+  // 格式化时间戳（暂时注释，因为未使用）
+  // const formatTimestamp = (timestamp: string | number): string => {
+  //   try {
+  //     return new Date(timestamp).toLocaleString();
+  //   } catch (error) {
+  //     return 'Invalid Date';
+  //   }
+  // };
 
-  // 获取当前查询地址 - 将null转换为undefined以匹配函数参数类型
-  const currentAddress = useCurrentAddress(address ?? undefined, formData.addressToQuery);
-  
-  // 获取代币信息
-  const { tokenName, tokenSymbol, tokenDecimals, tokenTotalSupply, isAddressValid } = useTokenInfo(formData.tokenContractAddress);
-  
-  // 查询ETH余额
-  const balanceQuery = useBalance({
-    address: currentAddress,
-    chainId: sepolia.id,
-  });
-
-  // 查询ERC20代币余额
-  const tokenBalance = useReadContract({
-    address: formData.tokenContractAddress as `0x${string}`,
-    abi: erc20ABI,
-    functionName: 'balanceOf',
-    args: [currentAddress],
-    chainId: sepolia.id,
-  });
-
-  // 功能1: 发送ETH交易
-  const { sendTransaction: sendEth, data: txData, isPending: isSendingTx } = useSendTransaction();
-
-  // 功能2: 发送ERC20代币
-  const { writeContract, data: tokenTxData, isPending: isSendingToken } = useWriteContract();
-
-  // 格式化大数值函数
-  const formatLargeNumber = useCallback((value: string, decimals: number = 18) => {
-    try {
-      return formatEther(parseUnits(value, decimals));
-    } catch {
-      return value;
-    }
-  }, []);
-  
-  // 监听Transfer事件
-  useWatchContractEvent({
-    address: formData.tokenContractAddress as `0x${string}`,
-    abi: erc20ABI,
-    eventName: 'Transfer',
-    onLogs: (logs) => {
-      const newEvents = logs.map(log => ({
-        from: log.args.from as string || '',
-        to: log.args.to as string || '',
-        value: String(log.args.value) || '0',
-        blockNumber: Number(log.blockNumber) || 0,
-        timestamp: new Date().toISOString()
-      }));
-      setDataState(prev => ({
-        transferEvents: [...newEvents, ...prev.transferEvents].slice(0, 10) // 只保留最近10条事件
-      }));
-    },
-    // 仅在事件选项卡激活时监听
-    enabled: uiState.activeTab === 4 && isValidEthAddress(formData.tokenContractAddress)
-  });
-
-  // 处理发送ETH交易
-  const handleSendEth = useCallback(() => {
-    setUiState(prev => ({ ...prev, error: null }));
-    
-    if (!isConnected) {
-      setUiState(prev => ({ ...prev, error: '请先连接钱包' }));
-      return;
-    }
-    
-    if (!formData.transferToAddress || !isValidEthAddress(formData.transferToAddress)) {
-      setUiState(prev => ({ ...prev, error: '请输入有效的目标地址' }));
-      return;
-    }
-    
-    if (!formData.transferAmount || isNaN(parseFloat(formData.transferAmount)) || parseFloat(formData.transferAmount) <= 0) {
-      setUiState(prev => ({ ...prev, error: '请输入有效的转账金额' }));
-      return;
-    }
-
-    try {
-      setUiState(prev => ({ ...prev, isLoading: true }));
-      sendEth({
-        to: formData.transferToAddress as `0x${string}`,
-        value: parseEther(formData.transferAmount),
-        chainId: sepolia.id,
-      });
-    } catch (error) {
-      console.error('发送交易失败:', error);
-      setUiState(prev => ({ 
-        ...prev, 
-        error: error instanceof Error ? error.message : '发送交易失败，请检查钱包余额或网络状态'
-      }));
-    } finally {
-      setUiState(prev => ({ ...prev, isLoading: false }));
-    }
-  }, [isConnected, formData.transferToAddress, formData.transferAmount, sendEth]);
-
-  // 处理发送ERC20代币
-  const handleSendToken = useCallback(() => {
-    setUiState(prev => ({ ...prev, error: null }));
-    
-    if (!isConnected) {
-      setUiState(prev => ({ ...prev, error: '请先连接钱包' }));
-      return;
-    }
-    
-    if (!formData.tokenContractAddress || !isValidEthAddress(formData.tokenContractAddress)) {
-      setUiState(prev => ({ ...prev, error: '请输入有效的代币合约地址' }));
-      return;
-    }
-    
-    if (!formData.transferToAddress || !isValidEthAddress(formData.transferToAddress)) {
-      setUiState(prev => ({ ...prev, error: '请输入有效的目标地址' }));
-      return;
-    }
-    
-    if (!formData.tokenAmount || isNaN(parseFloat(formData.tokenAmount)) || parseFloat(formData.tokenAmount) <= 0) {
-      setUiState(prev => ({ ...prev, error: '请输入有效的转账金额' }));
-      return;
-    }
-    
-    if (!tokenDecimals.data) {
-      setUiState(prev => ({ ...prev, error: '无法获取代币小数位信息' }));
-      return;
-    }
-
-    try {
-      setUiState(prev => ({ ...prev, isLoading: true }));
-      writeContract({
-        address: formData.tokenContractAddress as `0x${string}`,
-        abi: erc20ABI,
-        functionName: 'transfer',
-        args: [
-          formData.transferToAddress as `0x${string}`,
-          parseUnits(formData.tokenAmount, tokenDecimals.data),
-        ],
-        chainId: sepolia.id,
-      });
-    } catch (error) {
-      console.error('发送代币失败:', error);
-      setUiState(prev => ({ 
-        ...prev, 
-        error: error instanceof Error ? error.message : '发送代币失败，请检查钱包余额或网络状态'
-      }));
-    } finally {
-      setUiState(prev => ({ ...prev, isLoading: false }));
-    }
-  }, [isConnected, formData, tokenDecimals.data, writeContract]);
-
-  // 当连接地址变化时更新查询地址
-  useEffect(() => {
-    if (address) {
-      setFormData(prev => ({ ...prev, addressToQuery: address }));
-    }
-  }, [address]);
-
-  // 交易发送成功后的处理
-  useEffect(() => {
-    if (txData || tokenTxData) {
-      setUiState(prev => ({ ...prev, success: '交易已发送，等待确认' }));
-      // 3秒后清除成功消息
-      setTimeout(() => {
-        setUiState(prev => ({ ...prev, success: null }));
-      }, 3000);
-    }
-  }, [txData, tokenTxData]);
-
-  // 验证地址输入
-  const validateAddressInput = useCallback((value: string) => {
-    // 允许空值
-    if (!value) {
-      return '';
-    }
-    
-    // 去除空格
-    const trimmedValue = value.trim();
-    
-    // 转换为小写（以太坊地址大小写不敏感）
-    const lowercaseValue = trimmedValue.toLowerCase();
-    
-    // 检查是否以0x开头，如果不是则添加
-    return lowercaseValue.startsWith('0x') ? lowercaseValue : `0x${lowercaseValue}`;
-  }, []);
-
-  // 处理输入变化
-  const handleInputChange = (field: string, value: string) => {
-    if (['addressToQuery', 'transferToAddress', 'tokenContractAddress'].includes(field)) {
-      // 地址字段需要特殊验证
-      const validatedValue = validateAddressInput(value);
-      setFormData(prev => ({ ...prev, [field]: validatedValue }));
-    } else {
-      // 其他字段直接更新
-      setFormData(prev => ({ ...prev, [field]: value }));
-    }
+  // 自定义Tab面板组件
+  const TabPanel = ({ children, value, index }: { children: React.ReactNode; value: number; index: number }) => {
+    return (
+      <div role="tabpanel" hidden={value !== index} className="fade-in">
+        {value === index && <Box sx={{ pt: 3 }}>{children}</Box>}
+      </div>
+    );
   };
 
-  // 处理Tab变化
-  const handleTabChange = (_: React.SyntheticEvent, newValue: number) => {
-    setUiState(prev => ({ ...prev, activeTab: newValue, error: null, success: null }));
+  // 地址验证函数
+  const isValidEthAddress = useCallback((address: string): boolean => {
+    return /^0x[a-fA-F0-9]{40}$/.test(address);
+  }, []);
+
+  // 截取地址显示
+  const truncateAddress = useCallback((address: string): string => {
+    if (!address) return '';
+    return `${address.slice(0, 6)}...${address.slice(-4)}`;
+  }, []);
+
+  // 自定义Hook：获取当前选中地址（查询地址或连接地址）
+  const useCurrentAddress = (address: string | undefined | null, addressToQuery: string | undefined) => {
+    return useMemo(() => {
+      // 如果有查询地址且有效，使用查询地址，否则使用连接地址
+      if (addressToQuery && isValidEthAddress(addressToQuery)) {
+        return addressToQuery as `0x${string}`;
+      }
+      return address as `0x${string}`;
+    }, [address, addressToQuery]);
   };
 
-  // 复制交易哈希
-  const copyTxHash = useCallback(() => {
-    const hashToCopy = txData || tokenTxData;
-    if (hashToCopy && typeof window !== 'undefined') {
-      navigator.clipboard.writeText(hashToCopy);
-      setUiState(prev => ({ ...prev, success: '交易哈希已复制' }));
+  // 自定义Hook：获取代币信息
+  const useTokenInfo = (tokenContractAddress: string) => {
+    // 先验证地址有效性
+    const isAddressValid = isValidEthAddress(tokenContractAddress);
+    
+    // 始终在顶层调用React Hook，使用有效的地址或默认地址
+    const tokenName = useReadContract({
+      address: isAddressValid ? (tokenContractAddress as `0x${string}`) : undefined,
+      abi: erc20ABI,
+      functionName: 'name',
+      chainId: sepolia.id
+    });
+
+    const tokenSymbol = useReadContract({
+      address: isAddressValid ? (tokenContractAddress as `0x${string}`) : undefined,
+      abi: erc20ABI,
+      functionName: 'symbol',
+      chainId: sepolia.id
+    });
+
+    const tokenDecimals = useReadContract({
+      address: isAddressValid ? (tokenContractAddress as `0x${string}`) : undefined,
+      abi: erc20ABI,
+      functionName: 'decimals',
+      chainId: sepolia.id
+    });
+
+    const tokenTotalSupply = useReadContract({
+      address: isAddressValid ? (tokenContractAddress as `0x${string}`) : undefined,
+      abi: erc20ABI,
+      functionName: 'totalSupply',
+      chainId: sepolia.id
+    });
+
+    return { 
+      tokenName, 
+      tokenSymbol, 
+      tokenDecimals, 
+      tokenTotalSupply, 
+      isAddressValid 
+    };
+  };
+
+  // 使用钱包Hook
+    const { address, isConnected } = useWallet();
+
+    // 状态管理
+    const [tabValue, setTabValue] = useState(0);
+    const [recipient, setRecipient] = useState('');
+    const [amount, setAmount] = useState('');
+    const [tokenContractAddress, setTokenContractAddress] = useState(sampleErc20Address);
+    const [tokenTransferAmount, setTokenTransferAmount] = useState('');
+    const [tokenTransferRecipient, setTokenTransferRecipient] = useState('');
+    const [events, setEvents] = useState<Array<{transactionHash: string, blockNumber: number, from: string, to: string, value: string, logIndex?: number}>>([]);
+    const [addressToQuery, setAddressToQuery] = useState('');
+    const [transactionHash, setTransactionHash] = useState<string | null>(null);
+    const [transactionStatus, setTransactionStatus] = useState<'idle' | 'pending' | 'success' | 'error'>('idle');
+    const [notificationMessage, setNotificationMessage] = useState<string | null>(null);
+    const [notificationType, setNotificationType] = useState<'success' | 'error' | 'info'>('info');
+
+    // 获取当前要查询的地址
+    const currentAddress = useCurrentAddress(address, addressToQuery);
+
+    // 获取代币信息
+    const { tokenName, tokenSymbol, tokenDecimals, tokenTotalSupply, isAddressValid } = useTokenInfo(tokenContractAddress);
+
+    // 查询余额
+    const balance = useBalance({
+      address: currentAddress,
+      chainId: sepolia.id
+    });
+
+    // 查询代币余额
+    const tokenBalance = useReadContract({
+      address: isAddressValid ? (tokenContractAddress as `0x${string}`) : undefined,
+      abi: erc20ABI,
+      functionName: 'balanceOf',
+      args: [currentAddress],
+      chainId: sepolia.id
+    });
+
+    // 发送ETH交易
+    const sendTransaction = useSendTransaction();
+
+    // 发送代币交易
+    const writeContract = useWriteContract();
+
+    // 监听代币转账事件
+    useWatchContractEvent({
+      address: isAddressValid ? (tokenContractAddress as `0x${string}`) : undefined,
+      abi: erc20ABI,
+      eventName: 'Transfer',
+      chainId: sepolia.id,
+      onLogs: (logs) => {
+        setEvents((prevEvents) => [...logs, ...prevEvents]);
+      }
+    });
+
+    // 显示通知
+    const showNotification = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
+      setNotificationMessage(message);
+      setNotificationType(type);
       setTimeout(() => {
-        setUiState(prev => ({ ...prev, success: null }));
-      }, 2000);
-    }
-  }, [txData, tokenTxData]);
+        setNotificationMessage(null);
+      }, 5000);
+    }, [setNotificationMessage, setNotificationType]);
 
-  // 渲染余额查询选项卡
-  const renderBalanceTab = () => (
-    <Card sx={{ borderRadius: '1rem', overflow: 'hidden', boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)' }}>
-      <CardContent>
-        <Typography variant="h6" gutterBottom>查询余额</Typography>
-        <TextField
-          fullWidth
-          label="以太坊地址"
-          variant="outlined"
-          margin="normal"
-          value={formData.addressToQuery}
-          onChange={(e) => handleInputChange('addressToQuery', e.target.value)}
-          helperText={formData.addressToQuery && !isValidEthAddress(formData.addressToQuery) ? "地址格式无效" : "留空使用当前连接地址"}
-          error={formData.addressToQuery ? !isValidEthAddress(formData.addressToQuery) : false}
-        />
-        
-        {balanceQuery.isLoading ? (
-          <CircularProgress size={24} sx={{ mt: 2 }} />
-        ) : (
-          <Box sx={{ mt: 2, p: 2, bgcolor: 'rgba(59, 130, 246, 0.1)', borderRadius: 1 }}>
-            <Typography variant="subtitle1">ETH 余额: {balanceQuery.data ? formatEther(balanceQuery.data.value) : '0'} ETH</Typography>
-            <Typography variant="body2" color="text.secondary">
-              查询地址: {currentAddress ? truncateAddress(currentAddress) : '未连接'}
-            </Typography>
-          </Box>
-        )}
-        
-        <Divider sx={{ my: 4 }} />
-        
-        <Typography variant="h6" gutterBottom>查询ERC20代币余额</Typography>
-        <TextField
-          fullWidth
-          label="代币合约地址"
-          variant="outlined"
-          margin="normal"
-          value={formData.tokenContractAddress}
-          onChange={(e) => handleInputChange('tokenContractAddress', e.target.value)}
-          helperText={formData.tokenContractAddress && !isValidEthAddress(formData.tokenContractAddress) ? "地址格式无效" : "Sepolia测试网络代币"}
-          error={formData.tokenContractAddress ? !isValidEthAddress(formData.tokenContractAddress) : false}
-        />
-        
-        {tokenBalance.isLoading ? (
-          <CircularProgress size={24} sx={{ mt: 2 }} />
-        ) : tokenBalance.data && tokenSymbol.data ? (
-          <Box sx={{ mt: 2, p: 2, bgcolor: 'rgba(59, 130, 246, 0.1)', borderRadius: 1 }}>
-            <Typography variant="subtitle1">{tokenSymbol.data} 余额: {formatEther(tokenBalance.data)}</Typography>
-          </Box>
-        ) : (
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
-            暂无余额数据
-          </Typography>
-        )}
-      </CardContent>
-    </Card>
-  );
+    // 处理发送ETH
+    const handleSendEth = useCallback(async () => {
+      if (!recipient || !amount || !isValidEthAddress(recipient)) {
+        showNotification('请输入有效的接收地址和金额', 'error');
+        return;
+      }
 
-  // 渲染交易选项卡
-  const renderTransactionTab = () => (
-    <Card sx={{ borderRadius: '1rem', overflow: 'hidden', boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)' }}>
-      <CardContent>
-        <Typography variant="h6" gutterBottom>发送以太坊交易</Typography>
-        
-        <TextField
-          fullWidth
-          label="目标地址"
-          variant="outlined"
-          margin="normal"
-          value={formData.transferToAddress}
-          onChange={(e) => handleInputChange('transferToAddress', e.target.value)}
-          helperText={formData.transferToAddress && !isValidEthAddress(formData.transferToAddress) ? "地址格式无效" : ""}
-          error={formData.transferToAddress ? !isValidEthAddress(formData.transferToAddress) : false}
-        />
-        <TextField
-          fullWidth
-          label="金额 (ETH)"
-          variant="outlined"
-          margin="normal"
-          value={formData.transferAmount}
-          onChange={(e) => handleInputChange('transferAmount', e.target.value)}
-          type="number"
-          inputProps={{ min: 0, step: 0.0001 }}
-          helperText={formData.transferAmount && (isNaN(parseFloat(formData.transferAmount)) || parseFloat(formData.transferAmount) <= 0) ? "请输入有效的金额" : ""}
-          error={formData.transferAmount ? (isNaN(parseFloat(formData.transferAmount)) || parseFloat(formData.transferAmount) <= 0) : false}
-        />
-        
-        {balanceQuery.data && (
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            当前余额: {formatEther(balanceQuery.data.value)} ETH
-          </Typography>
-        )}
-        
-        <Button
-          variant="contained"
-          fullWidth
-          onClick={handleSendEth}
-          disabled={!formData.transferToAddress || !formData.transferAmount || !isValidEthAddress(formData.transferToAddress) || 
-                   isNaN(parseFloat(formData.transferAmount)) || parseFloat(formData.transferAmount) <= 0 || isSendingTx || uiState.isLoading}
-          sx={{ bgcolor: '#3b82f6', '&:hover': { bgcolor: '#2563eb' } }}
-          startIcon={isSendingTx || uiState.isLoading ? <CircularProgress sx={{ width: 16, height: 16 }} /> : <Send sx={{ width: 16, height: 16 }} />}
-        >
-          {isSendingTx || uiState.isLoading ? '发送中...' : '发送以太坊'}
-        </Button>
-        
-        {txData && (
-          <Box sx={{ mt: 3, p: 2, bgcolor: 'rgba(59, 130, 246, 0.1)', borderRadius: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Typography variant="subtitle1" sx={{ wordBreak: 'break-all' }}>交易哈希: {txData}</Typography>
-            <Tooltip title="复制交易哈希">
-              <IconButton size="small" onClick={copyTxHash}>
-                <CopyAll sx={{ width: 16, height: 16 }} />
-              </IconButton>
-            </Tooltip>
-          </Box>
-        )}
-      </CardContent>
-    </Card>
-  );
+      try {
+        setTransactionStatus('pending');
+        const result = await writeContract({
+          to: recipient as `0x${string}`,
+          functionName: 'transfer',
+          args: [recipient as `0x${string}`, parseEther(amount)],
+          value: parseEther(amount),
+          chainId: sepolia.id
+        });
 
-  // 渲染代币信息选项卡
-  const renderTokenInfoTab = () => (
-    <Card sx={{ borderRadius: '1rem', overflow: 'hidden', boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)' }}>
-      <CardContent>
-        <Typography variant="h6" gutterBottom>查询ERC20代币合约信息</Typography>
-        <TextField
-          fullWidth
-          label="代币合约地址"
-          variant="outlined"
-          margin="normal"
-          value={formData.tokenContractAddress}
-          onChange={(e) => handleInputChange('tokenContractAddress', e.target.value)}
-          helperText={formData.tokenContractAddress && !isValidEthAddress(formData.tokenContractAddress) ? "地址格式无效" : "请输入Sepolia测试网络上的ERC20代币合约地址"}
-          error={formData.tokenContractAddress ? !isValidEthAddress(formData.tokenContractAddress) : false}
-        />
-        
-        {formData.tokenContractAddress && !isAddressValid && (
-          <Alert severity="error" sx={{ mt: 2 }}>
-            请输入有效的以太坊合约地址
-          </Alert>
-        )}
-        
-        {formData.tokenContractAddress && isAddressValid && (
-          (tokenName.isLoading || tokenSymbol.isLoading || tokenDecimals.isLoading || tokenTotalSupply.isLoading) ? (
-            <div style={{ display: 'flex', justifyContent: 'center', marginTop: '1rem' }}>
-              <CircularProgress size={32} />
-            </div>
-          ) : (
-            <Box sx={{ mt: 2 }}>
-              {tokenName.error || tokenSymbol.error || tokenDecimals.error || tokenTotalSupply.error ? (
-                <Alert severity="error" sx={{ mb: 2 }}>
-                  查询代币信息失败，请检查合约地址是否正确或是否为有效的ERC20代币合约
-                </Alert>
-              ) : (
-                <>
-                  <Box sx={{ mb: 2, p: 2, bgcolor: 'rgba(59, 130, 246, 0.1)', borderRadius: 1 }}>
-                    <Typography variant="subtitle1">代币名称: {tokenName.data || '未知'}</Typography>
-                  </Box>
-                  <Box sx={{ mb: 2, p: 2, bgcolor: 'rgba(59, 130, 246, 0.1)', borderRadius: 1 }}>
-                    <Typography variant="subtitle1">代币符号: {tokenSymbol.data || '未知'}</Typography>
-                  </Box>
-                  <Box sx={{ mb: 2, p: 2, bgcolor: 'rgba(59, 130, 246, 0.1)', borderRadius: 1 }}>
-                    <Typography variant="subtitle1">小数位: {tokenDecimals.data || 0}</Typography>
-                  </Box>
-                  <Box sx={{ p: 2, bgcolor: 'rgba(59, 130, 246, 0.1)', borderRadius: 1 }}>
-                    <Typography variant="subtitle1">总供应量: {tokenTotalSupply.data && tokenDecimals.data ? formatLargeNumber(String(tokenTotalSupply.data), tokenDecimals.data) : '未知'}</Typography>
-                  </Box>
-                </>
-              )}
+        if (result.transactionHash) {
+          setTransactionHash(result.transactionHash);
+          showNotification(`交易已发送: ${truncateAddress(result.transactionHash)}`, 'success');
+          setTransactionStatus('success');
+        }
+      } catch (error) {
+        console.error('发送ETH失败:', error);
+        showNotification(`发送失败: ${error instanceof Error ? error.message : '未知错误'}`, 'error');
+        setTransactionStatus('error');
+      }
+    }, [recipient, amount, sendTransaction, showNotification, truncateAddress, isValidEthAddress]);
+
+    // 处理发送代币
+    const handleSendToken = useCallback(async () => {
+      if (!tokenContractAddress || !isAddressValid || !tokenTransferRecipient || !tokenTransferAmount) {
+        showNotification('请输入有效的合约地址、接收地址和金额', 'error');
+        return;
+      }
+
+      try {
+        setTransactionStatus('pending');
+        const result = await writeContract({
+          address: tokenContractAddress as `0x${string}`,
+          abi: erc20ABI,
+          functionName: 'transfer',
+          args: [tokenTransferRecipient as `0x${string}`, parseUnits(tokenTransferAmount, tokenDecimals.data as number)],
+          chainId: sepolia.id
+        });
+
+        if (result.hash) {
+          setTransactionHash(result.hash);
+          showNotification(`代币交易已发送: ${truncateAddress(result.hash)}`, 'success');
+          setTransactionStatus('success');
+        }
+      } catch (error) {
+        console.error('发送代币失败:', error);
+        showNotification(`发送失败: ${error instanceof Error ? error.message : '未知错误'}`, 'error');
+        setTransactionStatus('error');
+      }
+    }, [tokenContractAddress, isAddressValid, tokenTransferRecipient, tokenTransferAmount, tokenDecimals.data, writeContract, showNotification, truncateAddress]);
+
+    // 处理Tab切换
+    const handleTabChange = useCallback((event: React.SyntheticEvent, newValue: number) => {
+      setTabValue(newValue);
+    }, []);
+
+    // 复制交易哈希
+    const copyTransactionHash = useCallback(() => {
+      if (transactionHash) {
+        navigator.clipboard.writeText(transactionHash).then(() => {
+          showNotification('交易哈希已复制到剪贴板', 'success');
+        }).catch(() => {
+          showNotification('复制失败，请手动复制', 'error');
+        });
+      }
+    }, [transactionHash, showNotification]);
+
+    // 复制地址
+    const copyAddress = useCallback((addressToCopy: string) => {
+      navigator.clipboard.writeText(addressToCopy).then(() => {
+        showNotification('地址已复制到剪贴板', 'success');
+      }).catch(() => {
+        showNotification('复制失败，请手动复制', 'error');
+      });
+    }, [showNotification]);
+
+    // 处理地址查询
+    const handleAddressQuery = useCallback(() => {
+      if (!addressToQuery) {
+        showNotification('请输入要查询的地址', 'error');
+        return;
+      }
+      if (!isValidEthAddress(addressToQuery)) {
+        showNotification('请输入有效的以太坊地址', 'error');
+        return;
+      }
+      showNotification(`已开始查询地址: ${truncateAddress(addressToQuery)}`, 'info');
+    }, [addressToQuery, isValidEthAddress, truncateAddress, showNotification]);
+
+    // 处理代币合约地址变更
+    const handleTokenContractChange = useCallback(() => {
+      if (tokenContractAddress && isValidEthAddress(tokenContractAddress)) {
+        showNotification(`正在查询代币信息: ${truncateAddress(tokenContractAddress)}`, 'info');
+      }
+    }, [tokenContractAddress, isValidEthAddress, truncateAddress, showNotification]);
+
+    // 监听地址查询变更
+    useEffect(() => {
+      if (addressToQuery && isValidEthAddress(addressToQuery)) {
+        handleAddressQuery();
+      }
+    }, [addressToQuery, handleAddressQuery, isValidEthAddress]);
+
+    // 监听代币合约地址变更
+    useEffect(() => {
+      if (tokenContractAddress && isValidEthAddress(tokenContractAddress)) {
+        handleTokenContractChange();
+      }
+    }, [tokenContractAddress, handleTokenContractChange, isValidEthAddress]);
+
+    // 渲染余额查询选项卡
+    const renderBalanceTab = () => {
+      return (
+        <div>
+          <Box sx={{ mb: 4 }}>
+            <Typography variant="h6" sx={{ mb: 2 }}>以太坊地址余额</Typography>
+            <Box sx={{ display: 'flex', alignItems: 'flex-end', gap: 2, mb: 2 }}>
+              <TextField
+                fullWidth
+                label="输入地址查询"
+                variant="outlined"
+                value={addressToQuery}
+                onChange={(e) => setAddressToQuery(e.target.value)}
+                placeholder="0x..."
+                helperText={addressToQuery && !isValidEthAddress(addressToQuery) ? '无效的以太坊地址' : undefined}
+                error={addressToQuery && !isValidEthAddress(addressToQuery) ? true : undefined}
+              />
+              <Button
+                variant="contained"
+                color="primary"
+                onClick={handleAddressQuery}
+                startIcon={<Search size={16} />}
+              >
+                查询
+              </Button>
             </Box>
-          )
-        )}
-        
-        {!formData.tokenContractAddress && (
-          <Alert severity="info" sx={{ mt: 2 }}>
-            请输入代币合约地址以查询信息
-          </Alert>
-        )}
-      </CardContent>
-    </Card>
-  );
-
-  // 渲染代币转账选项卡
-  const renderTokenTransferTab = () => (
-    <Card sx={{ borderRadius: '1rem', overflow: 'hidden', boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)' }}>
-      <CardContent>
-        <Typography variant="h6" gutterBottom>发送ERC20代币</Typography>
-        
-        <TextField
-          fullWidth
-          label="代币合约地址"
-          variant="outlined"
-          margin="normal"
-          value={formData.tokenContractAddress}
-          onChange={(e) => handleInputChange('tokenContractAddress', e.target.value)}
-          helperText={formData.tokenContractAddress && !isValidEthAddress(formData.tokenContractAddress) ? "地址格式无效" : ""}
-          error={formData.tokenContractAddress ? !isValidEthAddress(formData.tokenContractAddress) : false}
-        />
-        <TextField
-          fullWidth
-          label="目标地址"
-          variant="outlined"
-          margin="normal"
-          value={formData.transferToAddress}
-          onChange={(e) => handleInputChange('transferToAddress', e.target.value)}
-          helperText={formData.transferToAddress && !isValidEthAddress(formData.transferToAddress) ? "地址格式无效" : ""}
-          error={formData.transferToAddress ? !isValidEthAddress(formData.transferToAddress) : false}
-        />
-        <TextField
-          fullWidth
-          label={`金额 (${tokenSymbol.data || '代币'})`}
-          variant="outlined"
-          margin="normal"
-          value={formData.tokenAmount}
-          onChange={(e) => handleInputChange('tokenAmount', e.target.value)}
-          type="number"
-          inputProps={{ min: 0, step: 0.0001 }}
-          helperText={formData.tokenAmount && (isNaN(parseFloat(formData.tokenAmount)) || parseFloat(formData.tokenAmount) <= 0) ? "请输入有效的金额" : ""}
-          error={formData.tokenAmount ? (isNaN(parseFloat(formData.tokenAmount)) || parseFloat(formData.tokenAmount) <= 0) : false}
-        />
-        
-        <Button
-          variant="contained"
-          fullWidth
-          onClick={handleSendToken}
-          disabled={!formData.transferToAddress || !formData.tokenAmount || !formData.tokenContractAddress || !isValidEthAddress(formData.transferToAddress) || 
-                   !isValidEthAddress(formData.tokenContractAddress) || isSendingToken || uiState.isLoading}
-          sx={{ bgcolor: '#3b82f6', '&:hover': { bgcolor: '#2563eb' } }}
-          startIcon={isSendingToken || uiState.isLoading ? <CircularProgress sx={{ width: 16, height: 16 }} /> : <Send sx={{ width: 16, height: 16 }} />}
-        >
-          {isSendingToken || uiState.isLoading ? '发送中...' : '发送代币'}
-        </Button>
-        
-        {tokenTxData && (
-          <Box sx={{ mt: 3, p: 2, bgcolor: 'rgba(59, 130, 246, 0.1)', borderRadius: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Typography variant="subtitle1" sx={{ wordBreak: 'break-all' }}>交易哈希: {tokenTxData}</Typography>
-            <Tooltip title="复制交易哈希">
-              <IconButton size="small" onClick={copyTxHash}>
-                <CopyAll sx={{ width: 16, height: 16 }} />
-              </IconButton>
-            </Tooltip>
+            
+            {currentAddress && (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
+                <Typography variant="body1" sx={{ fontWeight: 500 }}>
+                  当前查询地址: {truncateAddress(currentAddress)}
+                </Typography>
+                <IconButton size="small" onClick={() => copyAddress(currentAddress)}>
+                  <CopyAll fontSize="small" />
+                </IconButton>
+              </Box>
+            )}
           </Box>
-        )}
-      </CardContent>
-    </Card>
-  );
 
-  // 渲染事件监听选项卡
-  const renderEventsTab = () => (
-    <Card sx={{ borderRadius: '1rem', overflow: 'hidden', boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)' }}>
-      <CardContent>
-        <Typography variant="h6" gutterBottom>监听Transfer事件</Typography>
-        <TextField
-          fullWidth
-          label="代币合约地址"
-          variant="outlined"
-          margin="normal"
-          value={formData.tokenContractAddress}
-          onChange={(e) => handleInputChange('tokenContractAddress', e.target.value)}
-          helperText={formData.tokenContractAddress && !isValidEthAddress(formData.tokenContractAddress) ? "地址格式无效" : ""}
-          error={formData.tokenContractAddress ? !isValidEthAddress(formData.tokenContractAddress) : false}
-        />
-        
-        {!isValidEthAddress(formData.tokenContractAddress) && formData.tokenContractAddress && (
-          <Alert severity="info" sx={{ my: 2 }}>
-            请输入有效的代币合约地址以开始监听事件
-          </Alert>
-        )}
-        
-        <Typography variant="subtitle1" gutterBottom>最近的转账事件:</Typography>
-        
-        {dataState.transferEvents.length === 0 ? (
-          <Box sx={{ p: 3, textAlign: 'center', bgcolor: 'rgba(59, 130, 246, 0.05)', borderRadius: 1 }}>
-            <Typography variant="body2" color="text.secondary">
-              暂无事件数据
-            </Typography>
+          <Card sx={{ mb: 4 }}>
+            <CardContent>
+              <Typography variant="subtitle1" sx={{ mb: 2 }}>ETH 余额</Typography>
+              {balance.isLoading ? (
+                <CircularProgress size={20} />
+              ) : balance.data ? (
+                <Typography variant="h5" sx={{ fontWeight: 600 }}>
+                  {formatEther(balance.data.value)} ETH
+                </Typography>
+              ) : (
+                <Typography variant="body2" color="text.secondary">
+                  无法获取余额
+                </Typography>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent>
+              <Typography variant="subtitle1" sx={{ mb: 2 }}>地址信息</Typography>
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <Box>
+                  <Typography variant="caption" color="text.secondary">链 ID</Typography>
+                  <Typography variant="body2">{sepolia.id}</Typography>
+                </Box>
+                <Box>
+                  <Typography variant="caption" color="text.secondary">网络名称</Typography>
+                  <Typography variant="body2">{sepolia.name}</Typography>
+                </Box>
+              </Box>
+            </CardContent>
+          </Card>
+        </div>
+      );
+    };
+
+    // 渲染发送ETH选项卡
+    const renderSendEthTab = () => {
+      return (
+        <div>
+          <Box sx={{ mb: 4 }}>
+            <Typography variant="h6" sx={{ mb: 2 }}>发送 ETH</Typography>
+            
+            {!isConnected && (
+              <Alert severity="warning" sx={{ mb: 3 }}>
+                请先连接钱包以发送 ETH
+              </Alert>
+            )}
+
+            <TextField
+              fullWidth
+              label="接收地址"
+              variant="outlined"
+              value={recipient}
+              onChange={(e) => setRecipient(e.target.value)}
+              placeholder="0x..."
+              helperText={recipient && !isValidEthAddress(recipient) ? '无效的以太坊地址' : undefined}
+                error={recipient && !isValidEthAddress(recipient) ? true : undefined}
+              disabled={!isConnected}
+              sx={{ mb: 3 }}
+            />
+
+            <TextField
+              fullWidth
+              label="发送金额 (ETH)"
+              variant="outlined"
+              type="number"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="0.1"
+              helperText={amount && parseFloat(amount) <= 0 ? '请输入大于0的金额' : ''}
+              error={amount && parseFloat(amount) <= 0}
+              disabled={!isConnected}
+              sx={{ mb: 3 }}
+            />
+
+            <Button
+              variant="contained"
+              color="primary"
+              fullWidth
+              onClick={handleSendEth}
+              disabled={!isConnected || !recipient || !amount || !isValidEthAddress(recipient) || parseFloat(amount) <= 0}
+              sx={{ py: 1.5 }}
+              startIcon={<Send />}
+            >
+              {transactionStatus === 'pending' ? (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <CircularProgress size={16} />
+                  <span>发送中...</span>
+                </Box>
+              ) : (
+                '发送 ETH'
+              )}
+            </Button>
           </Box>
-        ) : (
-          <Box sx={{ maxHeight: 400, overflowY: 'auto' }}>
-            {dataState.transferEvents.map((event, index) => (
-              <Card key={index} sx={{ mb: 2, bgcolor: 'rgba(59, 130, 246, 0.05)', transition: 'all 0.2s' }}>
+
+          {transactionHash && (
+            <Card sx={{ mb: 4 }}>
+              <CardContent>
+                <Typography variant="subtitle1" sx={{ mb: 1 }}>交易哈希</Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                  <Typography variant="body2" sx={{ wordBreak: 'break-all', flexGrow: 1 }}>
+                    {transactionHash}
+                  </Typography>
+                  <IconButton size="small" onClick={copyTransactionHash}>
+                    <CopyAll fontSize="small" />
+                  </IconButton>
+                </Box>
+              </CardContent>
+            </Card>
+          )}
+
+          <Card>
+            <CardContent>
+              <Typography variant="subtitle2" sx={{ mb: 2, fontWeight: 500 }}>提示</Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
+                1. 请确保接收地址正确无误，一旦发送将无法撤销。
+                <br />
+                2. 交易需要网络确认，可能需要几分钟时间。
+                <br />
+                3. 发送前请确保余额充足，包括交易手续费。
+              </Typography>
+            </CardContent>
+          </Card>
+        </div>
+      );
+    };
+
+    // 渲染代币信息选项卡
+    const renderTokenInfoTab = () => {
+      return (
+        <div>
+          <Box sx={{ mb: 4 }}>
+            <Typography variant="h6" sx={{ mb: 2 }}>代币信息</Typography>
+            
+            <TextField
+              fullWidth
+              label="代币合约地址"
+              variant="outlined"
+              value={tokenContractAddress}
+              onChange={(e) => setTokenContractAddress(e.target.value)}
+              placeholder="0x..."
+              helperText={tokenContractAddress && !isValidEthAddress(tokenContractAddress) ? '无效的以太坊地址' : undefined}
+                error={tokenContractAddress && !isValidEthAddress(tokenContractAddress) ? true : undefined}
+              sx={{ mb: 3 }}
+            />
+
+            {!isAddressValid && tokenContractAddress && (
+              <Alert severity="error" sx={{ mb: 3 }}>
+                无效的代币合约地址
+              </Alert>
+            )}
+          </Box>
+
+          {(tokenName.isLoading || tokenSymbol.isLoading || tokenDecimals.isLoading || tokenTotalSupply.isLoading) && (
+            <Card sx={{ mb: 4 }}>
+              <CardContent>
+                <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+                  <CircularProgress size={40} />
+                </Box>
+                <Typography variant="body2" color="text.secondary" align="center">
+                  正在获取代币信息...
+                </Typography>
+              </CardContent>
+            </Card>
+          )}
+
+          {isAddressValid && !tokenName.isLoading && tokenName.data && (
+            <>
+              <Card sx={{ mb: 4 }}>
                 <CardContent>
-                  <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr', md: '1fr 1fr 1fr' }, gap: 2 }}>
-                    <div>
-                      <Typography variant="body2" color="text.secondary">发送方:</Typography>
-                      <Typography variant="body1">{truncateAddress(event.from)}</Typography>
-                    </div>
-                    <div>
-                      <Typography variant="body2" color="text.secondary">接收方:</Typography>
-                      <Typography variant="body1">{truncateAddress(event.to)}</Typography>
-                    </div>
-                    <div>
-                      <Typography variant="body2" color="text.secondary">金额:</Typography>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                    <Typography variant="h6">{tokenName.data}</Typography>
+                    <Typography variant="subtitle1" fontWeight="bold">{tokenSymbol.data}</Typography>
+                  </Box>
+                  <Divider sx={{ mb: 2 }} />
+                  <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
+                    <Box>
+                      <Typography variant="caption" color="text.secondary">小数位数</Typography>
+                      <Typography variant="body1">{tokenDecimals.data || 'N/A'}</Typography>
+                    </Box>
+                    <Box>
+                      <Typography variant="caption" color="text.secondary">总供应量</Typography>
                       <Typography variant="body1">
-                        {tokenDecimals.data ? formatLargeNumber(event.value, tokenDecimals.data) : event.value}
-                        {tokenSymbol.data && ` ${tokenSymbol.data}`}
+                        {tokenTotalSupply.data 
+                          ? tokenDecimals.data 
+                            ? formatEther(parseUnits(tokenTotalSupply.data.toString(), tokenDecimals.data)) 
+                            : tokenTotalSupply.data.toString()
+                          : 'N/A'}
+                        {' '}{tokenSymbol.data}
                       </Typography>
-                    </div>
-                    <div>
-                      <Typography variant="body2" color="text.secondary">区块号:</Typography>
-                      <Typography variant="body1">{event.blockNumber}</Typography>
-                    </div>
-                    <div>
-                      <Typography variant="body2" color="text.secondary">时间:</Typography>
-                      <Typography variant="body1">{formatTimestamp(event.timestamp)}</Typography>
-                    </div>
+                    </Box>
                   </Box>
                 </CardContent>
               </Card>
-            ))}
-          </Box>
-        )}
-      </CardContent>
-    </Card>
-  );
 
-  // 当钱包未连接时，让Nav组件中的连接按钮处理连接逻辑
-  // 移除重复的连接钱包页面，使用统一的导航栏连接体验
+              {currentAddress && (
+                <Card>
+                  <CardContent>
+                    <Typography variant="subtitle1" sx={{ mb: 2 }}>你的余额</Typography>
+                    {tokenBalance.isLoading ? (
+                      <CircularProgress size={20} />
+                    ) : tokenBalance.data ? (
+                      <Typography variant="h5" sx={{ fontWeight: 600 }}>
+                        {tokenDecimals.data 
+                          ? formatEther(parseUnits(tokenBalance.data.toString(), tokenDecimals.data)) 
+                          : tokenBalance.data.toString()}
+                        {' '}{tokenSymbol.data}
+                      </Typography>
+                    ) : (
+                      <Typography variant="body2" color="text.secondary">
+                        无法获取余额
+                      </Typography>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+            </>
+          )};
+        </div>
+      );
+    };
 
-  // 渲染主组件
-  return (
-    <Box sx={{ minHeight: '100vh', bgcolor: '#f8fafc' }}>
-      <Box sx={{ maxWidth: 1200, mx: 'auto', p: 4 }}>
-        <Typography variant="h4" gutterBottom sx={{ color: '#1e293b', fontWeight: 'bold', textAlign: 'center' }}>
-          Wagmi 区块链集成演示
-        </Typography>
-        
-        {/* 钱包连接状态 */}
-        <Card sx={{ mb: 4, borderRadius: '1rem', overflow: 'hidden', transition: 'all 0.3s ease', boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)' }}>
-          <CardContent sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
-            <Typography variant="subtitle1">
-              <span>已连接: {truncateAddress(address || '')}</span>
-            </Typography>
-            <div>
-              <Button
-                variant="outlined"
-                disabled={true}
-                startIcon={<Wallet sx={{ width: 16, height: 16 }} />}
-                sx={{
-                  borderColor: '#3b82f6',
-                  color: '#3b82f6',
-                  '&:hover': {
-                    borderColor: '#2563eb',
-                    bgcolor: 'rgba(59, 130, 246, 0.1)'
-                  }
-                }}
-              >
-                已连接
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-        
-        {/* 消息提示 */}
-        {uiState.error && (
-          <Alert severity="error" sx={{ mb: 4, borderRadius: 1 }}>
-            {uiState.error}
-          </Alert>
-        )}
-        {uiState.success && (
-          <Alert severity="success" sx={{ mb: 4, borderRadius: 1 }}>
-            {uiState.success}
-          </Alert>
-        )}
-        
-        {/* 功能选项卡 */}
-        <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
-          <Tabs 
-            value={uiState.activeTab} 
-            onChange={handleTabChange} 
-            variant="scrollable"
-            scrollButtons="auto"
-            aria-label="wagmi功能选项卡"
-            sx={{
-              '& .MuiTab-root': {
-                textTransform: 'none',
-                fontWeight: 'medium',
-                fontSize: '0.95rem'
-              },
-              '& .Mui-selected': {
-                color: '#3b82f6 !important',
-                fontWeight: 'bold'
-              },
-              '& .MuiTabs-indicator': {
-                backgroundColor: '#3b82f6'
+    // 渲染发送代币选项卡
+    const renderSendTokenTab = () => {
+      return (
+        <div>
+          <Box sx={{ mb: 4 }}>
+            <Typography variant="h6" sx={{ mb: 2 }}>发送代币</Typography>
+            
+            {!isConnected && (
+              <Alert severity="warning" sx={{ mb: 3 }}>
+                请先连接钱包以发送代币
+              </Alert>
+            )}
+
+            <TextField
+              fullWidth
+              label="代币合约地址"
+              variant="outlined"
+              value={tokenContractAddress}
+              onChange={(e) => setTokenContractAddress(e.target.value)}
+              placeholder="0x..."
+              helperText={tokenContractAddress && !isValidEthAddress(tokenContractAddress) ? '无效的以太坊地址' : ''}
+              error={tokenContractAddress && !isValidEthAddress(tokenContractAddress)}
+              disabled={!isConnected}
+              sx={{ mb: 3 }}
+            />
+
+            <TextField
+              fullWidth
+              label="接收地址"
+              variant="outlined"
+              value={tokenTransferRecipient}
+              onChange={(e) => setTokenTransferRecipient(e.target.value)}
+              placeholder="0x..."
+              helperText={tokenTransferRecipient && !isValidEthAddress(tokenTransferRecipient) ? '无效的以太坊地址' : undefined}
+                error={tokenTransferRecipient && !isValidEthAddress(tokenTransferRecipient) ? true : undefined}
+              disabled={!isConnected}
+              sx={{ mb: 3 }}
+            />
+
+            <TextField
+              fullWidth
+              label={`发送金额 (${tokenSymbol.data || '代币'})`}
+              variant="outlined"
+              type="number"
+              value={tokenTransferAmount}
+              onChange={(e) => setTokenTransferAmount(e.target.value)}
+              placeholder="1.0"
+              helperText={tokenTransferAmount && parseFloat(tokenTransferAmount) <= 0 ? '请输入大于0的金额' : ''}
+              error={tokenTransferAmount && parseFloat(tokenTransferAmount) <= 0}
+              disabled={!isConnected || !isAddressValid}
+              sx={{ mb: 3 }}
+            />
+
+            <Button
+              variant="contained"
+              color="primary"
+              fullWidth
+              onClick={handleSendToken}
+              disabled={
+                !isConnected || 
+                !tokenContractAddress || 
+                !isAddressValid || 
+                !tokenTransferRecipient || 
+                !tokenTransferAmount || 
+                !isValidEthAddress(tokenTransferRecipient) || 
+                parseFloat(tokenTransferAmount) <= 0
               }
-            }}
-          >
-            <Tab label="查询余额" />
-            <Tab label="发送 ETH" />
-            <Tab label="代币信息" />
-            <Tab label="发送代币" />
-            <Tab label="监听事件" />
-          </Tabs>
-        </Box>
-        
-        {/* 选项卡内容 */}
-        <TabPanel value={uiState.activeTab} index={0}>
-          {renderBalanceTab()}
-        </TabPanel>
-        <TabPanel value={uiState.activeTab} index={1}>
-          {renderTransactionTab()}
-        </TabPanel>
-        <TabPanel value={uiState.activeTab} index={2}>
-          {renderTokenInfoTab()}
-        </TabPanel>
-        <TabPanel value={uiState.activeTab} index={3}>
-          {renderTokenTransferTab()}
-        </TabPanel>
-        <TabPanel value={uiState.activeTab} index={4}>
-          {renderEventsTab()}
-        </TabPanel>
-        
-        {/* 使用说明 */}
-        <Card sx={{ mt: 6, borderRadius: '1rem', overflow: 'hidden', bgcolor: 'rgba(241, 245, 249, 0.8)' }}>
-          <CardContent>
-            <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <Info sx={{ width: 18, height: 18 }} />
-              使用说明
+              sx={{ py: 1.5 }}
+              startIcon={<Send />}
+            >
+              {transactionStatus === 'pending' ? (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <CircularProgress size={16} />
+                  <span>发送中...</span>
+                </Box>
+              ) : (
+                `发送 ${tokenSymbol.data || '代币'}`
+              )}
+            </Button>
+          </Box>
+
+          {transactionHash && (
+            <Card sx={{ mb: 4 }}>
+              <CardContent>
+                <Typography variant="subtitle1" sx={{ mb: 1 }}>交易哈希</Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                  <Typography variant="body2" sx={{ wordBreak: 'break-all', flexGrow: 1 }}>
+                    {transactionHash}
+                  </Typography>
+                  <IconButton size="small" onClick={copyTransactionHash}>
+                    <CopyAll size={16} />
+                  </IconButton>
+                </Box>
+              </CardContent>
+            </Card>
+          )}
+
+          {isAddressValid && tokenSymbol.data && (
+            <Card>
+              <CardContent>
+                <Typography variant="subtitle2" sx={{ mb: 2, fontWeight: 500 }}>提示</Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
+                  1. 请确保代币合约地址和接收地址正确无误。
+                  <br />
+                  2. 发送前请确保您持有足够的 {tokenSymbol.data} 代币和 ETH 用于支付手续费。
+                  <br />
+                  3. 交易可能需要几分钟时间才能确认。
+                </Typography>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      );
+    };
+
+    // 渲染事件监听选项卡
+    const renderEventListenerTab = () => {
+      return (
+        <div>
+          <Box sx={{ mb: 4 }}>
+            <Typography variant="h6" sx={{ mb: 2 }}>代币转账事件</Typography>
+            
+            <TextField
+              fullWidth
+              label="代币合约地址"
+              variant="outlined"
+              value={tokenContractAddress}
+              onChange={(e) => setTokenContractAddress(e.target.value)}
+              placeholder="0x..."
+              helperText={tokenContractAddress && !isValidEthAddress(tokenContractAddress) ? '无效的以太坊地址' : ''}
+              error={tokenContractAddress && !isValidEthAddress(tokenContractAddress)}
+              sx={{ mb: 3 }}
+            />
+
+            {!isAddressValid && tokenContractAddress && (
+              <Alert severity="error" sx={{ mb: 3 }}>
+                无效的代币合约地址，无法监听事件
+              </Alert>
+            )}
+          </Box>
+
+          <Card>
+            <CardContent>
+              <Typography variant="subtitle1" sx={{ mb: 3 }}>最近的转账事件</Typography>
+              
+              {events.length === 0 ? (
+                <Typography variant="body2" color="text.secondary" align="center" sx={{ py: 4 }}>
+                  暂无转账事件记录
+                </Typography>
+              ) : (
+                <Box sx={{ maxHeight: 400, overflowY: 'auto', gap: 2, display: 'flex', flexDirection: 'column' }}>
+                  {events.slice(0, 10).map((event, index) => {
+                    // 确保事件数据有效
+                    if (!event || !event.blockNumber) return null;
+                    
+                    const from = event.from as string;
+                    const to = event.to as string;
+                    const value = event.value as bigint;
+                    const formattedValue = tokenDecimals.data 
+                      ? formatEther(parseUnits(value.toString(), tokenDecimals.data)) 
+                      : value.toString();
+                    
+                    return (
+                      <Box key={`${event.blockNumber}-${event.logIndex}-${index}`} sx={{ p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                          <Typography variant="subtitle2" fontWeight={500}>
+                            {truncateAddress(from)} → {truncateAddress(to)}
+                          </Typography>
+                          <Box sx={{ textAlign: 'right' }}>
+                            <Typography variant="subtitle1" fontWeight={600}>
+                              {formattedValue}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              {tokenSymbol.data || '代币'}
+                            </Typography>
+                          </Box>
+                        </Box>
+                        <Box sx={{ mt: 2, display: 'flex', justifyContent: 'space-between', color: 'text.secondary', fontSize: '0.75rem' }}>
+                          <Typography variant="caption">区块: {event.blockNumber}</Typography>
+                          <Typography variant="caption">索引: {event.logIndex}</Typography>
+                        </Box>
+                      </Box>
+                    );
+                  })}
+                </Box>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      );
+    };
+
+  // 组件返回部分
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <div className="max-w-4xl mx-auto p-4 sm:p-6 lg:p-8 py-12">
+          {/* 页面标题 */}
+          <Box sx={{ textAlign: 'center', mb: 8 }}>
+            <Typography variant="h4" component="h1" gutterBottom>
+              Web3 集成演示
             </Typography>
-            <Typography variant="body2" color="text.secondary" paragraph>
-              1. 使用Wagmi库提供的Hooks可以轻松与以太坊区块链交互，无需手动管理provider和signer。
+            <Typography variant="subtitle1" color="text.secondary">
+              通过 Wagmi 和 Viem 实现的以太坊交互界面
             </Typography>
-            <Typography variant="body2" color="text.secondary" paragraph>
-              2. 所有操作都在Sepolia测试网络上进行，请确保您的钱包已切换到正确的网络。
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              3. 页面上展示了查询余额、发送交易、查询代币信息、发送代币和监听事件等常用功能。
-            </Typography>
-          </CardContent>
-        </Card>
-      </Box>
-    </Box>
-  );
-};
+          </Box>
+
+          {/* 钱包连接状态 */}
+          <Box sx={{ mb: 6 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4 }}>
+              <Typography variant="h6">钱包连接</Typography>
+              <div>
+                {isConnected && address && (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                    <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                      {truncateAddress(address)}
+                    </Typography>
+                    <IconButton size="small" onClick={() => copyAddress(address)}>
+                  <CopyAll fontSize="small" />
+                    </IconButton>
+                  </Box>
+                )}
+              </div>
+            </Box>
+          </Box>
+
+          {/* 状态消息 */}
+          {notificationMessage && (
+            <Alert
+              severity={notificationType}
+              sx={{ mb: 4 }}
+              onClose={() => setNotificationMessage(null)}
+            >
+              {notificationMessage}
+            </Alert>
+          )}
+
+          {/* 功能选项卡 */}
+          <Card sx={{ mb: 8 }}>
+            <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
+              <Tabs
+                value={tabValue}
+                onChange={handleTabChange}
+                variant="scrollable"
+                scrollButtons="auto"
+                aria-label="功能选项卡"
+              >
+                <Tab label="余额查询" />
+                <Tab label="发送 ETH" />
+                <Tab label="代币信息" />
+                <Tab label="发送代币" />
+                <Tab label="事件监听" />
+              </Tabs>
+            </Box>
+            <CardContent>
+              <TabPanel value={tabValue} index={0}>{renderBalanceTab()}</TabPanel>
+              <TabPanel value={tabValue} index={1}>{renderSendEthTab()}</TabPanel>
+              <TabPanel value={tabValue} index={2}>{renderTokenInfoTab()}</TabPanel>
+              <TabPanel value={tabValue} index={3}>{renderSendTokenTab()}</TabPanel>
+              <TabPanel value={tabValue} index={4}>{renderEventListenerTab()}</TabPanel>
+            </CardContent>
+          </Card>
+
+          {/* 使用说明 */}
+          <Card>
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
+                <Info size={20} color="primary" />
+                <Typography variant="h6">使用说明</Typography>
+              </Box>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                此演示界面使用 Wagmi 和 Viem 库与以太坊网络进行交互。您可以：
+              </Typography>
+              <ul style={{ listStyleType: 'disc', paddingLeft: '20px', marginBottom: '16px' }}>
+                <li style={{ marginBottom: '8px' }}>
+                  <Typography variant="body2">查询任何以太坊地址的余额和信息</Typography>
+                </li>
+                <li style={{ marginBottom: '8px' }}>
+                  <Typography variant="body2">发送 ETH 到其他地址</Typography>
+                </li>
+                <li style={{ marginBottom: '8px' }}>
+                  <Typography variant="body2">查询和管理 ERC20 代币</Typography>
+                </li>
+                <li style={{ marginBottom: '8px' }}>
+                  <Typography variant="body2">发送 ERC20 代币到其他地址</Typography>
+                </li>
+                <li>
+                  <Typography variant="body2">监听代币的转账事件</Typography>
+                </li>
+              </ul>
+              <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+                提示：此演示使用 Sepolia 测试网络，请确保您的钱包已切换至 Sepolia 网络并拥有测试 ETH。
+              </Typography>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  };
 
 export default WagmiPage;
